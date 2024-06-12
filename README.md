@@ -6,3 +6,9 @@ In this repositor there are powershell scripts that create a Linux VM under linu
 - Powershell for Linux
 - On curent Host httpd and php installed
 - Custom Redhat 9 ISO with custim isolinux.cfg
+
+# How to Use
+
+´´bash´´
+pwsh
+´´bash´´
