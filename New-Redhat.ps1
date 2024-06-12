@@ -1,100 +1,100 @@
 Function New-LinuxVM {
-    # Statische Konfigurationswerte
-    $VMHost = "vSphereHost"  # Ändere diesen Wert in den Namen des VMware Hosts
-    $ISOPath = "[datastore1] isos/redhat9-4.iso"  # Pfad zur ISO-Datei im VMware Datastore
-    $NetworkName = "VM Network"  # Netzwerkname in VMware
-    $Gateway = "192.168.1.1"  # Standard-Gateway
-    $DNS1 = 10.10.10.5
-    $DNS2 = 10.10.10.4
-    $domain = domain.com
-    $Timezone = Europe/Berlin
+    # Connect to the vCenter Server
+    $vCenterServer = "example-vcs-server"
+    $vCenterUser = "admin@example.com"
+    $vCenterPass = "examplePassword123!"
+    $SecurePassword = ConvertTo-SecureString $vCenterPass -AsPlainText -Force
+    $Credential = New-Object System.Management.Automation.PSCredential ($vCenterUser, $SecurePassword)
+    Connect-VIServer -Server $vCenterServer -Credential $Credential
 
-    # Benutzereingaben einholen
-    $Name = Read-Host "Bitte geben Sie den Namen der VM ein"
-    $Datastore = Read-Host "Bitte geben Sie den Datastore-Namen ein"
-    $DiskGB = Read-Host "Bitte geben Sie die Größe der Festplatte in GB ein"
-    $MemoryGB = Read-Host "Bitte geben Sie den Arbeitsspeicher in GB ein"
-    $NumCpu = Read-Host "Bitte geben Sie die Anzahl der CPUs ein"
-    $Notes = Read-Host "Bitte geben Sie Notizen zur VM ein"
-    $GuestID = Read-Host "Bitte geben Sie die Guest ID ein"
-    $IP = Read-Host "Bitte geben Sie die IP-Adresse ein"
-
-    # VM erstellen
-    $VM = New-VM -VMHost $VMHost -Name $Name -Datastore $Datastore -DiskGB $DiskGB -DiskStorageFormat Thick -MemoryGB $MemoryGB -NumCpu $NumCpu -NetworkName $NetworkName -Notes $Notes -GuestID $GuestID
-
-    # Überprüfen und VM stoppen, wenn nötig, um das CD-Laufwerk sicher hinzuzufügen
-    if ((Get-VM -Name $Name).PowerState -eq "PoweredOn") {
-        Stop-VM -VM $VM -Confirm:$false -Kill
-        Start-Sleep -Seconds 10  # Kurze Pause, um sicherzustellen, dass die VM gestoppt ist
+    # Datastore Selection
+    $datastores = @("datastore1", "datastore2", "datastore3", "datastore4")
+    $datastoreMenu = $datastores | ForEach-Object { "$($datastores.IndexOf($_) + 1): $_" } | Out-String
+    Write-Host "Please select a datastore from the following list:"
+    Write-Host $datastoreMenu
+    $selectedDatastoreIndex = Read-Host "Enter the number of the desired datastore"
+    try {
+        $selectedDatastoreIndex = [int]$selectedDatastoreIndex
+        $Datastore = $datastores[$selectedDatastoreIndex - 1]
+    } catch {
+        Write-Host "Invalid selection, script will end."
+        return
     }
 
-    # Überprüfen, ob die VM ein CD-Laufwerk hat und ein neues hinzufügen
+    # Static Configuration Values
+    $VMHost = "example-host"
+    $ISOPath = "[datastore1] ISO/Linux/example.iso"  # Correct ISO path
+    $NetworkName = "example-network"
+    $Gateway = "192.168.1.1"
+    $GuestID = "rhel9_64Guest"
+
+    # Collect User Inputs
+    $Name = Read-Host "Please enter the VM name"
+    $DiskGB = Read-Host "Please enter the disk size in GB"
+    $MemoryGB = Read-Host "Please enter the RAM size in GB"
+    $NumCpu = Read-Host "Please enter the number of CPUs"
+    $Notes = Read-Host "Please enter notes about the VM"
+    $IP = Read-Host "Please enter the IP address"
+
+    # Create VM
+    $VM = New-VM -VMHost $VMHost -Name $Name -Datastore $Datastore -DiskGB $DiskGB -DiskStorageFormat Thick -MemoryGB $MemoryGB -NumCpu $NumCpu -NetworkName $NetworkName -Notes $Notes -GuestID $GuestID
+
+    # Check and stop VM if necessary to safely add the CD drive
+    if ((Get-VM -Name $Name).PowerState -eq "PoweredOn") {
+        Stop-VM -VM $VM -Confirm:$false -Kill
+        Start-Sleep -Seconds 10  # Short pause to ensure the VM is stopped
+    }
+
+    # Check if the VM has a CD drive and add a new one if not
     $CDrive = Get-CDDrive -VM $VM
     if (-not $CDrive) {
         $CDrive = New-CDDrive -VM $VM -Confirm:$false
     }
 
-    # VM starten
+    # Start the VM
     Start-VM -VM $VM -Confirm:$false
-    Start-Sleep -Seconds 10  # Warten, bis die VM vollständig hochgefahren ist
+    Start-Sleep -Seconds 10  # Wait until the VM is fully booted
 
-    # Konfigurieren Sie das CD-Laufwerk mit der ISO-Datei, nachdem die VM gestartet wurde
+    # Configure the CD drive with the ISO file after the VM has started
     Set-CDDrive -CD $CDrive -IsoPath $ISOPath -StartConnected $true -Connected $true -Confirm:$false
 
-
-    # Kickstart-Konfigurationsdatei erstellen
+    # Generate and save the kickstart file
     $kickstartContent = @"
-# Kickstart configuration for $Name
+#version=RHEL9
+install
+cdrom
 lang en_US
-keyboard --xlayouts='de'
-timezone $Timezone --isUtc
-rootpw --iscrypted yourrootsecret
+keyboard --xlayouts='us'
+timezone Europe/Berlin --isUtc
+rootpw --iscrypted $(echo yourPassword | openssl passwd -1 -stdin)
 reboot
 text
-cdrom
-bootloader --append="rhgb quiet crashkernel=1G-4G:192M,4G-64G:256M,64G-:512M"
+bootloader --append="rhgb quiet crashkernel=1G-4G:192M, 4G-64G:256M, 64G-:512M"
 zerombr
 clearpart --all --initlabel
 autopart
-network --bootproto=static --ip=$IP --netmask=255.255.255.0 --gateway=$Gateway --nameserver=$DNS1,$DNS2 --hostname=$Name --noipv6 --search=$domain
+network --bootproto=static --ip=$IP --netmask=255.255.255.0 --gateway=$Gateway --nameserver=192.168.1.2,192.168.1.3 --hostname=$Name --domain=example.com
 firstboot --disable
 selinux --enforcing
 firewall --enabled
 %packages
 @^minimal-environment
-%post
-# Install Node Exporter
-mkdir /opt/node_exporter
-cd /opt/node_exporter
-curl -LO https://github.com/prometheus/node_exporter/releases/download/v*/node_exporter-*-linux-amd64.tar.gz
-tar xvfz node_exporter-*-linux-amd64.tar.gz --strip-components=1
-./node_exporter --web.listen-address=":9100" &
-echo '[Unit]
-Description=Node Exporter
-
-[Service]
-ExecStart=/opt/node_exporter/node_exporter
-
-[Install]
-WantedBy=default.target' > /etc/systemd/system/node_exporter.service
-systemctl enable node_exporter
-systemctl start node_exporter
 %end
 "@
 
-    $kickstartFilePath = "/var/www/html/RHks.php"
+    $kickstartFilePath = "/var/www/html/kickstart.php"
     $kickstartContent | Out-File -FilePath $kickstartFilePath -Encoding ASCII -Force
 
- # VM ausschalten
- Stop-VM -VM $VM -Confirm:$false -Kill
- Start-Sleep -Seconds 20  # Kurze Pause, um sicherzustellen, dass die VM komplett ausgeschaltet ist
+    # Shut down the VM
+    Stop-VM -VM $VM -Confirm:$false -Kill
+    Start-Sleep -Seconds 20  # Short pause to ensure the VM is completely shut down
 
- # VM erneut starten
- Start-VM -VM $VM -Confirm:$false
- Start-Sleep -Seconds 20  # Warten, um sicherzustellen, dass die VM vollständig hochgefahren ist
+    # Restart the VM
+    Start-VM -VM $VM -Confirm:$false
+    Start-Sleep -Seconds 20  # Wait to ensure the VM is fully booted
 
- Write-Host "VM '$Name' wurde erfolgreich erstellt und konfiguriert. Kickstart-Datei wurde unter $kickstartFilePath gespeichert."
+    Write-Host "VM '$Name' has been successfully created and configured. Kickstart file saved at $kickstartFilePath."
 }
 
-# Diese Funktion aufrufen, um die VM zu erstellen
+# Call this function to create the VM
 New-LinuxVM
