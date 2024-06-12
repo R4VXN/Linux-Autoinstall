@@ -9,6 +9,6 @@ In this repositor there are powershell scripts that create a Linux VM under linu
 
 # How to Use
 
-´´bash´´
-pwsh
-´´bash´´
+ ```bash
+ pwsh
+  ```
